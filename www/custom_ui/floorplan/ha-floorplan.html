@@ -1,6 +1,6 @@
 <!--
   Floorplan for Home Assistant
-  Version: 1.0.13
+  Version: 1.0.14
   https://github.com/pkozul/ha-floorplan
 -->
 
@@ -215,6 +215,14 @@
       }.bind({ instance: this, callback: callback }));
     }
 
+    makeArray(item) {
+      let items = item;
+      if (!Array.isArray(item)) {
+        items = items != null ? [items] : [];
+      }
+      return items;
+    }
+
     loadFloorPlan(callback) {
       jQuery.ajax({
         url: this.config.image + '?cacheBuster=' + (new Date().getTime()),
@@ -234,6 +242,8 @@
 
           let elementGroups = this.instance.config.groups.filter(x => x.elements);
           for (let elementGroup of elementGroups) {
+            let actions = this.instance.makeArray(elementGroup.action);
+
             for (let elementId of elementGroup.elements) {
               let svgElement = $(svg).find(`[id="${elementId}"]`);
 
@@ -247,10 +257,11 @@
 
                 this.instance.elementConfigs[elementId] = elementConfig;
 
-                if (elementGroup.action.data.elements) {
-                  for (let otherElementId of elementGroup.action.data.elements) {
+                for (let action of actions) {
+                  let otherElementIds = this.instance.makeArray(action.data.elements);
+                  for (let otherElementId of otherElementIds) {
                     let otherSvgElement = $(svg).find(`[id="${otherElementId}"]`);
-                    $(otherSvgElement).addClass(elementGroup.action.data.default_class);
+                    $(otherSvgElement).addClass(action.data.default_class);
                   }
                 }
               }
@@ -712,48 +723,68 @@
 
       let elementConfig = this.instance.elementConfigs[this.elementId];
       if (elementConfig.group.action) {
-        let action = elementConfig.group.action;
-        if (action.service) {
-          switch (action.domain) {
-            case 'class':
+        let actions = this.instance.makeArray(elementConfig.group.action);
 
-              switch (action.service) {
-                case 'toggle':
-                  let svg = this.instance.$.floorplan.querySelector('svg');
-                  let classes = action.data.classes;
+        for (let action of actions) {
+          if (action.service) {
+            switch (action.domain) {
+              case 'class':
+                let svg = this.instance.$.floorplan.querySelector('svg');
+                let otherElementIds = this.instance.makeArray(action.data.elements);
+                let classes = this.instance.makeArray(action.data.classes);
+                let joinedClasses = classes.join(' ');
 
-                  for (let otherElementId of action.data.elements) {
-                    let otherSvgElement = $(svg).find(`[id="${otherElementId}"]`);
+                switch (action.service) {
+                  case 'toggle':
+                    for (let otherElementId of otherElementIds) {
+                      let otherSvgElement = $(svg).find(`[id="${otherElementId}"]`);
 
-                    if ($(otherSvgElement).hasClass(classes[0])) {
-                      $(otherSvgElement).removeClass(classes[0]);
-                      $(otherSvgElement).addClass(classes[1]);
+                      if ($(otherSvgElement).hasClass(classes[0])) {
+                        $(otherSvgElement).removeClass(classes[0]);
+                        $(otherSvgElement).addClass(classes[1]);
+                      }
+                      else if ($(otherSvgElement).hasClass(classes[1])) {
+                        $(otherSvgElement).removeClass(classes[1]);
+                        $(otherSvgElement).addClass(classes[0]);
+                      }
+                      else {
+                        $(otherSvgElement).addClass(action.data.default_class);
+                      }
                     }
-                    else if ($(otherSvgElement).hasClass(classes[1])) {
-                      $(otherSvgElement).removeClass(classes[1]);
-                      $(otherSvgElement).addClass(classes[0]);
-                    }
-                    else {
-                      $(otherSvgElement).addClass(action.data.default_class);
-                    }
-                  }
-                  break;
-              }
-              break;
+                    break;
 
-            default:
-              domain = action.domain
-              let data = action.data ? action.data : {};
-              if (action.data_template) {
-                let entities = this.instance.hass.states;
-                let entityState = entities[entityId];
-                let result = this.instance.assemble(action.data_template, entityState, entities);
-                data = JSON.parse(result);
-              }
-              this.instance.hass.callService(domain, action.service, data);
-              break;
+                  case 'add':
+                    for (let otherElementId of otherElementIds) {
+                      let otherSvgElement = $(svg).find(`[id="${otherElementId}"]`);
+                      $(otherSvgElement).addClass(joinedClasses);
+                    }
+                    break;
+
+                  case 'remove':
+                    for (let otherElementId of otherElementIds) {
+                      let otherSvgElement = $(svg).find(`[id="${otherElementId}"]`);
+                      $(otherSvgElement).removeClass(joinedClasses);
+                    }
+                    break;
+
+                }
+                break;
+
+              default:
+                domain = action.domain;
+                let data = action.data ? action.data : {};
+                if (action.data_template) {
+                  let entities = this.instance.hass.states;
+                  let entityState = entities[entityId];
+                  let result = this.instance.assemble(action.data_template, entityState, entities);
+                  data = JSON.parse(result);
+                }
+                this.instance.hass.callService(domain, action.service, data);
+                break;
+            }
           }
         }
+
       }
     }
 
@@ -763,8 +794,8 @@
       let entityId = this.entityId;
 
       let entityConfig = this.instance.entityConfigs[entityId];
-      if (entityConfig.group.action) {
-        let action = entityConfig.group.action;
+      let actions = this.instance.makeArray(entityConfig.group.action);
+      for (let action of actions) {
         if (action.service) {
           let domain = action.domain ? action.domain : entityId.substr(0, entityId.indexOf('.'));
           domain = (domain == 'group') ? 'homeassistant' : domain;
@@ -791,7 +822,8 @@
           this.instance.fire('hass-more-info', { entityId: entityId });
         }
       }
-      else {
+
+      if (!actions.length) {
         this.instance.fire('hass-more-info', { entityId: entityId });
       }
     }
