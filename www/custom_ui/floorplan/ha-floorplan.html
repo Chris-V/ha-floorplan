@@ -6,6 +6,7 @@
 
 <script src="lib/jquery-3.2.1.min.js"></script>
 <script src="lib/moment.min.js"></script>
+<script src="lib/yaml.min.js"></script>
 <script src="lib/svg-pan-zoom.min.js"></script>
 
 <!-- As documented here for chrome, removes the need for touchstart -->
@@ -135,45 +136,57 @@
 
       window.onerror = this.handleWindowError.bind(this);
 
+      const validateGroups = () => {
+          let invalidGroups = this.config.groups.filter(x => x.entities && x.elements);
+          if (invalidGroups.length) {
+              this.isLoading = false;
+              this.warn(`A group cannot contain both 'entities' and 'elements' in floorplan configuration`);
+              return;
+          }
+
+          invalidGroups = this.config.groups.filter(x => !x.entities && !x.elements);
+          if (invalidGroups.length) {
+              this.isLoading = false;
+              this.warn(`A group must contain either 'entities' or 'elements' in floorplan configuration`);
+              return;
+          }
+
+          this.hass.connection.socket.addEventListener('message', event => {
+              let data = JSON.parse(event.data);
+
+              // Store the time difference between the local web browser and the Home Assistant server
+              if (data.event && data.event.time_fired) {
+                  let lastEventFiredTime = moment(data.event.time_fired).toDate();
+                  this.timeDifference = moment().diff(moment(lastEventFiredTime), 'milliseconds');
+              }
+          });
+
+          this.addExternalCss(() => {
+              this.loadFloorPlan(() => {
+                  this.isLoading = false;
+                  this.handleEntities(this.hass.states);
+              });
+          });
+
+          if (this.config.groups.find(entityGroup => entityGroup.state_transitions)) {
+              setInterval(this.updateStateTransitions.bind(this), 100);
+          }
+      };
+
       if (!this.config.groups) {
         this.isLoading = false;
         this.warn(`Cannot find 'groups' in floorplan configuration`);
-        return;
-      }
-
-      let invalidGroups = this.config.groups.filter(x => x.entities && x.elements);
-      if (invalidGroups.length) {
-        this.isLoading = false;
-        this.warn(`A group cannot contain both 'entities' and 'elements' in floorplan configuration`);
-        return;
-      }
-
-      invalidGroups = this.config.groups.filter(x => !x.entities && !x.elements);
-      if (invalidGroups.length) {
-        this.isLoading = false;
-        this.warn(`A group must contain either 'entities' or 'elements' in floorplan configuration`);
-        return;
-      }
-
-      this.hass.connection.socket.addEventListener('message', event => {
-        let data = JSON.parse(event.data);
-
-        // Store the time difference between the local web browser and the Home Assistant server
-        if (data.event && data.event.time_fired) {
-          let lastEventFiredTime = moment(data.event.time_fired).toDate();
-          this.timeDifference = moment().diff(moment(lastEventFiredTime), 'milliseconds');
-        }
-      });
-
-      this.addExternalCss(() => {
-        this.loadFloorPlan(() => {
-          this.isLoading = false;
-          this.handleEntities(this.hass.states);
-        });
-      });
-
-      if (this.config.groups.find(entityGroup => entityGroup.state_transitions)) {
-        setInterval(this.updateStateTransitions.bind(this), 100);
+      } else if (typeof this.config.groups === 'string') {
+          jQuery.ajax(this.config.groups + '?cacheBuster=' + (new Date().getTime())).done(groupsYaml => {
+            this.config.groups = yaml.load(groupsYaml);
+            validateGroups();
+          }).fail(error => {
+            this.isLoading = false;
+            this.warn(`Cannot load 'groups' file in floorplan configuration`);
+            console.error(`Cannot load 'groups' file in floorplan configuration`, error);
+          });
+      } else {
+          validateGroups();
       }
     }
 
